@@ -6,48 +6,31 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 360  # Remember: GitHub limits this to 360 minutes (6 hours) max
+    timeout-minutes: 360
 
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-
-          # Remove any existing rule with the same name to avoid duplication
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          
-          # Allow any incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-
-          # Restart the Remote Desktop service
           Restart-Service -Name TermService -Force
 
-      - name: Create SOKMEAN User with Secure Password
+      - name: Create SOKMEAN User with Fixed Password
         run: |
-          Add-Type -AssemblyName System.Security
-          $charSet = @{
-              Upper   = [char[]](65..90)
-              Lower   = [char[]](97..122)
-              Number  = [char[]](48..57)
-              Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
-          }
-          $rawPassword = @()
-          $rawPassword += $charSet.Upper | Get-Random -Count 4
-          $rawPassword += $charSet.Lower | Get-Random -Count 4
-          $rawPassword += $charSet.Number | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 4
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          # SET YOUR PASSWORD HERE
+          $password = "12345678@ABC"
+          
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-          # CHANGED: Username set to "SOKMEAN"
+          # Create the user "SOKMEAN"
           New-LocalUser -Name "SOKMEAN" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "SOKMEAN"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SOKMEAN"
           
-          # CHANGED: Log the new username
+          # Save credentials to environment variables for the log
           echo "RDP_CREDS=User: SOKMEAN | Password: $password" >> $env:GITHUB_ENV
           
           if (-not (Get-LocalUser -Name "SOKMEAN")) {
@@ -59,7 +42,6 @@ jobs:
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
-          
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
@@ -67,7 +49,6 @@ jobs:
       - name: Establish Tailscale Connection
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
@@ -75,7 +56,6 @@ jobs:
               Start-Sleep -Seconds 5
               $retries++
           }
-          
           if (-not $tsIP) {
               Write-Error "Tailscale IP not assigned. Exiting."
               exit 1
@@ -96,14 +76,8 @@ jobs:
         run: |
           Write-Host "`n=== RDP ACCESS ==="
           Write-Host "Address: $env:TAILSCALE_IP"
-          
-          # CHANGED: Display SOKMEAN in the logs
           Write-Host "Username: SOKMEAN"
-          
-          # Extract password correctly from the env var string we created earlier
-          # (Splitting the string to show just the password for clarity if needed, 
-          # or just printing the whole credential line)
-          Write-Host "Credentials: $(echo $env:RDP_CREDS)"
+          Write-Host "Password: 12345678@ABC"
           Write-Host "==================`n"
           
           while ($true) {
